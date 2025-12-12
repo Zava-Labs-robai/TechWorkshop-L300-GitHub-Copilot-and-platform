@@ -8,13 +8,12 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: ${{ vars.ACR_NAME }}.azurecr.io
   IMAGE_NAME: zavastorefont
-  APP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    environment: dev
 
     steps:
       - name: Checkout code
@@ -30,15 +29,16 @@ jobs:
 
       - name: Build and push Docker image
         run: |
+          REGISTRY="${{ vars.ACR_NAME }}.azurecr.io"
           # Build the Docker image
-          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest ./src
+          docker build -t $REGISTRY/${{ env.IMAGE_NAME }}:${{ github.sha }} -t $REGISTRY/${{ env.IMAGE_NAME }}:latest ./src
 
           # Push both tags to registry
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker push $REGISTRY/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker push $REGISTRY/${{ env.IMAGE_NAME }}:latest
 
       - name: Deploy to Azure App Service
         uses: azure/webapps-deploy@v3
         with:
-          app-name: ${{ env.APP_NAME }}
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          images: ${{ vars.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
