@@ -31,7 +31,7 @@ jobs:
         run: |
           REGISTRY="${{ vars.ACR_NAME }}.azurecr.io"
           # Build the Docker image
-          docker build -t $REGISTRY/${{ env.IMAGE_NAME }}:${{ github.sha }} -t $REGISTRY/${{ env.IMAGE_NAME }}:latest ./src
+          docker build -t $REGISTRY/${{ env.IMAGE_NAME }}:${{ github.sha }} -t $REGISTRY/${{ env.IMAGE_NAME }}:latest .
 
           # Push both tags to registry
           docker push $REGISTRY/${{ env.IMAGE_NAME }}:${{ github.sha }}
