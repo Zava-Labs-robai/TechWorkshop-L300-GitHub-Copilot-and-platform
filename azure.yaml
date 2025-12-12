@@ -1,0 +1,41 @@
+# Azure Developer CLI (azd) configuration file
+# See https://learn.microsoft.com/azure/developer/azure-developer-cli/
+
+name: zava-storefront
+
+metadata:
+  template: zava-storefront@0.0.1
+
+infra:
+  provider: bicep
+  path: ./infra
+  module: main
+
+services:
+  web:
+    project: ./src
+    host: appservice
+    language: dotnet
+    resourceName: ${SERVICE_WEB_NAME}
+    docker:
+      path: ./Dockerfile
+      context: .
+
+# Pipeline configuration for GitHub Actions
+pipeline:
+  provider: github
+
+# Hooks for custom commands during deployment
+hooks:
+  preprovision:
+    shell: sh
+    run: echo "Starting infrastructure provisioning..."
+  postprovision:
+    shell: sh
+    run: echo "Infrastructure provisioning complete!"
+  predeploy:
+    shell: sh
+    run: echo "Starting application deployment..."
+  postdeploy:
+    shell: sh
+    run: echo "Deployment complete! App URL - ${SERVICE_WEB_ENDPOINT_URL}"

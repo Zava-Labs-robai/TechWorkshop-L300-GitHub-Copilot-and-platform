@@ -1,0 +1,178 @@
+name: Build and Deploy ZavaStorefront
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'Dockerfile'
+      - '.github/workflows/docker-build.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'Dockerfile'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+env:
+  DOTNET_VERSION: '6.0.x'
+  DOCKER_IMAGE_NAME: 'zavastorefont'
+
+jobs:
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        working-directory: ./src
+        run: dotnet restore
+
+      - name: Build
+        working-directory: ./src
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Test
+        working-directory: ./src
+        run: dotnet test --no-build --verbosity normal --configuration Release
+        continue-on-error: true
+
+  docker-build-push:
+    name: Build and Push Docker Image
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build-push.outputs.digest }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get ACR Login Server
+        id: acr-info
+        run: |
+          ACR_LOGIN_SERVER=$(az acr list --query "[0].loginServer" -o tsv)
+          ACR_NAME=$(az acr list --query "[0].name" -o tsv)
+          echo "acr_login_server=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
+          echo "acr_name=$ACR_NAME" >> $GITHUB_OUTPUT
+
+      - name: Login to Azure Container Registry
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ steps.acr-info.outputs.acr_login_server }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.acr-info.outputs.acr_login_server }}/${{ env.DOCKER_IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push Docker image
+        id: build-push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Output image info
+        run: |
+          echo "Image pushed: ${{ steps.meta.outputs.tags }}"
+          echo "Image digest: ${{ steps.build-push.outputs.digest }}"
+
+  deploy:
+    name: Deploy to App Service
+    needs: docker-build-push
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get App Service name
+        id: app-info
+        run: |
+          ENVIRONMENT="${{ github.event.inputs.environment || 'dev' }}"
+          APP_NAME="zava-${ENVIRONMENT}-app"
+          echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
+
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ steps.app-info.outputs.app_name }}
+          images: ${{ needs.docker-build-push.outputs.image-tag }}
+
+      - name: Azure Logout
+        run: az logout
+        if: always()
+
+  provision-infrastructure:
+    name: Provision Infrastructure (Manual)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Install Azure Developer CLI
+        uses: azure/setup-azd@v1.0.0
+
+      - name: Provision with AZD
+        run: |
+          azd provision --no-prompt
+        env:
+          AZURE_ENV_NAME: ${{ github.event.inputs.environment || 'dev' }}
+          AZURE_LOCATION: westus3
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Azure Logout
+        run: az logout
+        if: always()
